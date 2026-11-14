@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>SpreadJS 图表 API 探针</title>
+<!-- 只加载 SpreadJS：图表 / 形状是独立插件，all 包不含。
+     加载顺序有依赖：charts 内部引用 Shapes.ShapeBaseData，必须 shapes 先、charts 后。 -->
+<script src="vendor/gc.spread.sheets.all.min.js"></script>
+<script src="vendor/gc.spread.sheets.shapes.min.js"></script>
+<script src="vendor/gc.spread.sheets.charts.min.js"></script>
+<script src="js/api-probe-chart-sjs.js"></script>
+<style>
+  html, body { margin: 0; font-family: "Microsoft YaHei", sans-serif; }
+  #ss { width: 1200px; height: 800px; }
+</style>
+</head>
+<body>
+<div id="ss"></div>
+<script>
+  window.__spread = new GC.Spread.Sheets.Workbook(document.getElementById('ss'), { sheetCount: 1 });
+  window.__chartReady = true;
+</script>
+</body>
+</html>

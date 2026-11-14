@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/dist_univer/univer_bundle.css">
+<script src="/dist_univer/univer_bundle.js"></script>
+<style>html,body{margin:0;padding:0;width:100%;height:100%}</style>
+</head>
+<body>
+<div id="app" style="width:1400px;height:900px"></div>
+<script>
+window.__ready = false;
+(async () => {
+    await window.initPerfUniver('app');
+    window.__ready = true;
+})();
+
+window.setupWorkload = function (data) {
+    const wb = window.univerAPI.createWorkbook({ name: 'perf' });
+    window.__wb = wb;
+    const mk = (name, rows, cols) => {
+        let s = wb.getSheetByName(name);
+        if (!s) s = wb.create(name, rows, cols);
+        return s;
+    };
+    window.__sheets = {
+        Data: mk('Data', 10001, 9),
+        Params: mk('Params', 4, 2),
+        Products: mk('Products', 21, 2),
+        Report: mk('Report', 20, 21),
+        Chain: mk('Chain', 1001, 4),
+        Dynamic: mk('Dynamic', 10001, 30),
+    };
+    const setVals = (ws, vals, r0 = 0, c0 = 0) => {
+        if (!vals.length) return;
+        const nr = vals.length, nc = Math.max(...vals.map(v => v.length));
+        const grid = [];
+        for (let r = 0; r < nr; r++) {
+            const row = [];
+            for (let c = 0; c < nc; c++) row.push(vals[r][c] === undefined ? null : (vals[r][c] ?? null));
+            grid.push(row);
+        }
+        ws.getRange(r0, c0, nr, nc).setValues(grid);
+    };
+    setVals(window.__sheets.Data, data.dataValues);
+    setVals(window.__sheets.Params, data.paramsValues);
+    setVals(window.__sheets.Products, data.productsValues);
+    setVals(window.__sheets.Report, data.reportValues);
+    setVals(window.__sheets.Report, data.reportPart2, 8, 0);
+    setVals(window.__sheets.Chain, data.chainValues);
+    return true;
+};
+
+// 写公式（计时）。Univer 无全局挂起计算 API，靠后续 executeCalculation 计时全量重算
+window.writeFormulas = function (data) {
+    const sheets = window.__sheets;
+    const t0 = performance.now();
+    // Data 表 F..I 一次 setFormulas 批量写
+    const grid = [];
+    for (let r = 1; r < data.dataFormulas.length; r++) {
+        const row = data.dataFormulas[r];
+        grid.push([row[5], row[6], row[7], row[8]]);
+    }
+    sheets.Data.getRange(1, 5, grid.length, 4).setFormulas(grid);
+    const put = (sheet, cell, formula) => {
+        const m = /^([A-Z]+)(\d+)$/.exec(cell);
+        let col = 0; for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64);
+        sheet.getRange(parseInt(m[2]) - 1, col - 1).setFormula(formula);
+    };
+    for (const f of data.reportFormulas) put(sheets.Report, f.cell, f.formula);
+    for (const f of data.chainFormulas) put(sheets.Chain, f.cell, f.formula);
+    for (const f of data.dynFormulas) put(sheets.Dynamic, f.cell, f.formula);
+    const writeMs = performance.now() - t0;
+    return { writeMs };
+};
+
+// 强制全量重算（executeCalculation + calculationEnd 计时）
+window.forceFullCalc = async function (runs) {
+    const formula = window.univerAPI.getFormula();
+    const times = [];
+    for (let i = 0; i < runs; i++) {
+        const t0 = performance.now();
+        await new Promise((resolve) => {
+            let done = false;
+            const d = formula.calculationEnd(() => { if (!done) { done = true; resolve(); } });
+            formula.executeCalculation();
+            setTimeout(() => { if (!done) { done = true; try { d.dispose(); } catch (e) {} resolve(); } }, 120000);
+        });
+        times.push(performance.now() - t0);
+    }
+    return times;
+};
+
+// 修改 1 个输入 + 强制全量重算
+window.editAndRecalc = async function () {
+    const t0 = performance.now();
+    window.__sheets.Params.getRange(1, 1).setValue(0.17);
+    await new Promise((resolve) => {
+        const formula = window.univerAPI.getFormula();
+        let done = false;
+        const d = formula.calculationEnd(() => { if (!done) { done = true; resolve(); } });
+        formula.executeCalculation();
+        setTimeout(() => { if (!done) { done = true; try { d.dispose(); } catch (e) {} resolve(); } }, 120000);
+    });
+    return performance.now() - t0;
+};
+
+// 读取核对样本
+window.readSamples = async function (samples) {
+    const out = [];
+    for (const s of samples) {
+        const sheet = window.__sheets[s.sheet];
+        const m = /^([A-Z]+)(\d+)$/.exec(s.cell);
+        let col = 0; for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64);
+        const v = sheet.getRange(parseInt(m[2]) - 1, col - 1).getValue();
+        out.push({ sheet: s.sheet, cell: s.cell, value: v === undefined ? null : v });
+    }
+    return out;
+};
+</script>
+</body>
+</html>

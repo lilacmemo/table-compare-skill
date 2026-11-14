@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>SpreadJS vs Univer 格式对照台</title>
+<link rel="stylesheet" href="vendor/univer.bundle.css">
+<script src="vendor/gc.spread.sheets.all.min.js"></script>
+<script src="vendor/gc.spread.sheets.io.min.js"></script>
+<script src="vendor/univer.bundle.js"></script>
+<script src="js/workload.js"></script>
+<script src="js/perf.js"></script>
+<script src="js/api-probe.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; display: flex; flex-direction: column; background: #eef0f4; color: #1f2430; overflow: hidden; }
+  /* 只用 id 选择器：Univer 内部也会渲染 <header>/<footer>，裸元素选择器会把它一起改掉，
+     导致它的 sheet 区被撑出 268px 空档、画布只剩 257px 高（见 README「已知边界」）。 */
+  #appHd { flex: none; height: 52px; background: #1f2937; color: #fff; display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+  #appHd .brand { font-size: 15px; font-weight: 600; margin-right: 8px; white-space: nowrap; }
+  #appHd .brand span { font-size: 11px; font-weight: 400; color: #9ca3af; margin-left: 6px; }
+  #appHd select, #appHd button { height: 30px; border-radius: 6px; border: 1px solid #374151; background: #111827; color: #e5e7eb; font-size: 12.5px; padding: 0 10px; cursor: pointer; }
+  #appHd button.primary { background: #2563eb; border-color: #2563eb; font-weight: 600; }
+  #appHd button:hover { filter: brightness(1.15); }
+  #appHd .spacer { flex: 1; }
+  #status { font-size: 12px; color: #9ca3af; white-space: nowrap; }
+  body > main { flex: 1; display: flex; min-height: 0; gap: 8px; padding: 8px; }
+  .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #d5d9e0; border-radius: 8px; overflow: hidden; }
+  .pane-hd { flex: none; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 12.5px; font-weight: 600; background: #f7f8fa; border-bottom: 1px solid #e5e7eb; }
+  .pane-hd .tag { font-weight: 400; font-size: 11.5px; color: #6b7280; }
+  .pane-hd .sjs { color: #b91c1c; }
+  .pane-hd .uni { color: #1d4ed8; }
+  .host { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+  #footer { flex: none; height: 268px; background: #fff; border-top: 1px solid #d5d9e0; display: flex; flex-direction: column; }
+  #footer.collapsed { height: 34px; }
+  #footer.perf-mode { height: 300px; }
+  .foot-hd { flex: none; height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: #f7f8fa; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563; }
+  .foot-hd b { font-size: 12.5px; color: #1f2430; }
+  .foot-hd button { height: 24px; border-radius: 5px; border: 1px solid #cbd2dc; background: #fff; font-size: 11.5px; padding: 0 8px; cursor: pointer; }
+  .foot-body { flex: 1; display: flex; min-height: 0; }
+  .codes { flex: 1; display: flex; gap: 8px; padding: 8px; min-width: 0; }
+  .codecol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .codecol label { font-size: 11.5px; color: #6b7280; margin-bottom: 4px; }
+  .codecol textarea { flex: 1; resize: none; font-family: Consolas, "Courier New", monospace; font-size: 11.5px; line-height: 1.55; padding: 8px; border: 1px solid #d5d9e0; border-radius: 6px; background: #fbfcfe; color: #1f2430; white-space: pre; overflow: auto; }
+  .logs { width: 320px; flex: none; border-left: 1px solid #e5e7eb; display: flex; flex-direction: column; }
+  .logs .t { height: 26px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; font-size: 11.5px; color: #6b7280; border-bottom: 1px solid #f0f2f5; }
+  .logs .t button { border: none; background: none; color: #2563eb; cursor: pointer; font-size: 11.5px; }
+  #log { flex: 1; overflow: auto; padding: 6px 8px; font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.6; }
+  .ok { color: #047857; }
+  .fail { color: #b91c1c; }
+  .info { color: #6b7280; }
+  .case-note { flex: none; padding: 6px 12px; background: #fffbeb; border-top: 1px solid #fde68a; font-size: 11.5px; color: #92400e; line-height: 1.5; }
+
+  /* ---- 视图切换 ---- */
+  .tabs { display: flex; gap: 4px; background: #111827; border-radius: 7px; padding: 3px; }
+  .tab { height: 24px !important; border: none !important; background: transparent !important; color: #9ca3af !important; font-size: 12px !important; padding: 0 12px !important; border-radius: 5px !important; }
+  .tab.on { background: #2563eb !important; color: #fff !important; font-weight: 600; }
+
+  /* ---- 性能面板 ---- */
+  #perfPanel { flex: 1; display: none; min-height: 0; flex-direction: column; }
+  #perfPanel.on { display: flex; }
+  .perf-bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563; }
+  .perf-bar label { color: #6b7280; }
+  .perf-bar select, .perf-bar button { height: 26px; border-radius: 6px; border: 1px solid #cbd2dc; background: #fff; font-size: 12px; padding: 0 9px; cursor: pointer; }
+  .perf-bar button.go { background: #2563eb; border-color: #2563eb; color: #fff; font-weight: 600; }
+  .perf-bar button:disabled { opacity: .5; cursor: default; }
+  #perfMsg { flex: 1; color: #2563eb; font-size: 12px; }
+  .perf-body { flex: 1; overflow: auto; padding: 0 12px 10px; }
+  table.perf { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.perf th, table.perf td { border: 1px solid #e5e7eb; padding: 6px 9px; text-align: right; white-space: nowrap; }
+  table.perf th { background: #f7f8fa; color: #4b5563; font-weight: 600; text-align: center; }
+  table.perf td.l { text-align: left; }
+  table.perf tr.sjs td:first-child { color: #b91c1c; font-weight: 600; }
+  table.perf tr.uni td:first-child { color: #1d4ed8; font-weight: 600; }
+  table.perf td.win { color: #047857; font-weight: 700; }
+  table.perf td.lose { color: #b91c1c; }
+  .verdict { padding: 8px 12px; font-size: 12.5px; color: #1f2430; background: #f0f7ff; border-top: 1px solid #dbeafe; }
+  .verdict b { color: #1d4ed8; }
+
+  /* ---- API 检查面板 ---- */
+  #footer.api-mode { height: 460px; }
+  #footer.api-mode .foot-body, #footer.api-mode .foot-hd { display: none; }
+  #apiPanel { flex: 1; display: none; min-height: 0; flex-direction: column; }
+  #apiPanel.on { display: flex; }
+  .api-bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #4b5563; flex-wrap: wrap; }
+  .api-bar label { color: #6b7280; }
+  .api-bar select, .api-bar button { height: 26px; border-radius: 6px; border: 1px solid #cbd2dc; background: #fff; font-size: 12px; padding: 0 9px; cursor: pointer; }
+  .api-bar button.go { background: #2563eb; border-color: #2563eb; color: #fff; font-weight: 600; }
+  .api-bar button:disabled { opacity: .5; cursor: default; }
+  #apiMsg { flex: 1; color: #2563eb; font-size: 12px; min-width: 200px; }
+  .api-sum { flex: none; padding: 6px 12px; font-size: 12px; background: #f9fafb; border-bottom: 1px solid #e5e7eb; color: #374151; }
+  .api-sum b.sjs { color: #b91c1c; }
+  .api-sum b.uni { color: #1d4ed8; }
+  .api-body { flex: 1; overflow: auto; }
+  table.api { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+  table.api th, table.api td { border: 1px solid #eceff3; padding: 4px 7px; vertical-align: top; }
+  table.api thead th { position: sticky; top: 0; background: #f7f8fa; color: #4b5563; font-weight: 600; text-align: left; z-index: 1; }
+  table.api td.id { white-space: nowrap; font-weight: 600; color: #374151; }
+  table.api td.g { white-space: nowrap; color: #9ca3af; }
+  table.api td.api { font-family: Consolas, monospace; font-size: 11px; color: #1f2430; max-width: 260px; }
+  table.api td.res { white-space: nowrap; text-align: center; width: 64px; }
+  table.api td.got { font-family: Consolas, monospace; font-size: 10.5px; color: #6b7280; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.api td.note { color: #92400e; max-width: 300px; }
+  .r-ok { color: #047857; font-weight: 700; }
+  .r-no { color: #9ca3af; font-weight: 700; }
+  .r-bad { color: #b91c1c; font-weight: 700; }
+  table.api tr.diff td.id { background: #fff7ed; }
+</style>
+</head>
+<body>
+<header id="appHd">
+  <div class="brand">SpreadJS vs Univer 对照台<span>同代码 · 双实例 · 看差异</span></div>
+  <div class="tabs">
+    <button class="tab on" data-view="func">功能对照</button>
+    <button class="tab" data-view="perf">性能基准</button>
+    <button class="tab" data-view="api">API 检查</button>
+  </div>
+  <select id="caseSel" title="选择测试项，自动填充两侧代码"></select>
+  <button id="btnRun" class="primary" title="执行两侧代码（Ctrl+Enter）">执行两侧</button>
+  <button id="btnReset">重置</button>
+  <button id="btnLic" title="填入 SpreadJS 授权码以去掉试用水印">授权</button>
+  <div class="spacer"></div>
+  <span id="status">初始化中…</span>
+</header>
+
+<main>
+  <section class="pane">
+    <div class="pane-hd">SpreadJS <span class="tag sjs" id="sjsVer">19.2.2</span><span class="tag" id="sjsLic">试用模式</span></div>
+    <div class="host" id="sjsHost"></div>
+  </section>
+  <section class="pane">
+    <div class="pane-hd">Univer <span class="tag uni" id="uniVer">OSS 1.3.1</span><span class="tag">含条件格式插件</span></div>
+    <div class="host" id="uniHost"></div>
+  </section>
+</main>
+
+<footer id="footer">
+  <div class="foot-hd">
+    <b>测试代码</b>
+    <span id="caseExcel">选择上方测试项后，这里显示 Excel 基线行为</span>
+    <div class="spacer" style="flex:1"></div>
+    <button id="btnToggle">收起面板</button>
+  </div>
+  <div class="foot-body">
+    <div class="codes">
+      <div class="codecol">
+        <label>SpreadJS 代码（spread / sheet / GC）</label>
+        <textarea id="codeSjs" spellcheck="false"></textarea>
+      </div>
+      <div class="codecol">
+        <label>Univer 代码（univerAPI / wb / sheet）</label>
+        <textarea id="codeUni" spellcheck="false"></textarea>
+      </div>
+    </div>
+    <div class="logs">
+      <div class="t"><span>执行日志</span><button id="btnClearLog">清空</button></div>
+      <div id="log"></div>
+    </div>
+  </div>
+  <div id="perfPanel">
+    <div class="perf-bar">
+      <label>负载规模</label>
+      <select id="perfRows">
+        <option value="9999" selected>9,999 行 · 43,259 条公式（标准）</option>
+        <option value="4999">4,999 行 · 23,259 条公式</option>
+        <option value="1999">1,999 行 · 11,259 条公式（快速）</option>
+      </select>
+      <label>重算轮次</label>
+      <select id="perfRounds">
+        <option value="1">1 轮</option>
+        <option value="3" selected>3 轮</option>
+        <option value="5">5 轮</option>
+      </select>
+      <button id="btnPerfRun" class="go">开始运行</button>
+      <button id="btnPerfExport" disabled>导出结果</button>
+      <span id="perfMsg">口径：建表灌值不计时 → 写公式计时 → 全量重算逐轮计时 → 改一个输入后重算</span>
+    </div>
+    <div class="perf-body">
+      <table class="perf" id="perfTable">
+        <thead>
+          <tr>
+            <th style="text-align:left">引擎</th>
+            <th>写公式 (ms)</th>
+            <th>恢复计算 (ms)</th>
+            <th>全量重算 各轮 (ms)</th>
+            <th>重算中位数 (ms)</th>
+            <th>改值重算 (ms)</th>
+            <th>样本一致性</th>
+          </tr>
+        </thead>
+        <tbody id="perfBody">
+          <tr><td class="l" colspan="7" style="text-align:center;color:#9ca3af">尚未运行</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="verdict" id="perfVerdict"></div>
+  </div>
+
+  <div id="apiPanel">
+    <div class="api-bar">
+      <button id="btnApiRun" class="go">跑全部用例</button>
+      <button id="btnApiExport" disabled>导出 JSON</button>
+      <label>筛选</label>
+      <select id="apiFilter">
+        <option value="all" selected>全部</option>
+        <option value="diff">仅两侧有差异</option>
+        <option value="sjsno">仅 SJS 无入口</option>
+        <option value="unino">仅 Univer 无入口</option>
+        <option value="fail">仅失败项</option>
+      </select>
+      <span id="apiMsg">口径：不比对渲染效果，只判「能不能用代码设、能不能用代码读回」；跑完会改写两侧工作表，回功能对照前请点「重置」。</span>
+    </div>
+    <div class="api-sum" id="apiSum"></div>
+    <div class="api-body">
+      <table class="api" id="apiTable">
+        <thead>
+          <tr>
+            <th style="width:46px">ID</th>
+            <th style="width:34px">组</th>
+            <th style="width:150px">能力项</th>
+            <th style="width:180px">Excel 基线</th>
+            <th style="width:230px">SpreadJS API</th>
+            <th style="width:52px">SJS</th>
+            <th style="width:210px">SJS 读回</th>
+            <th style="width:230px">Univer API</th>
+            <th style="width:52px">Uni</th>
+            <th style="width:210px">Uni 读回</th>
+            <th>备注</th>
+          </tr>
+        </thead>
+        <tbody id="apiBody">
+          <tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:14px">尚未运行</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</footer>
+
+<script>
+const logEl = document.getElementById('log');
+const statusEl = document.getElementById('status');
+
+function log(side, ok, msg) {
+  const d = document.createElement('div');
+  d.className = ok ? 'ok' : 'fail';
+  const t = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  d.textContent = `[${t}] ${side}: ${ok ? 'OK' : 'FAIL'} ${msg || ''}`;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function info(msg) {
+  const d = document.createElement('div');
+  d.className = 'info';
+  d.textContent = msg;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ---------- SpreadJS ----------
+const sjsLicKey = localStorage.getItem('sjs_license') || '';
+let spread = null;
+try {
+  spread = new GC.Spread.Sheets.Workbook(document.getElementById('sjsHost'), { sheetCount: 1 });
+  if (sjsLicKey) {
+    spread.setLicenseKey(sjsLicKey);
+    document.getElementById('sjsLic').textContent = '已填授权';
+  }
+  for (let i = spread.getSheetCount() - 1; i > 0; i--) spread.removeSheet(i);
+  spread.getActiveSheet().name('Sheet1');
+} catch (e) {
+  statusEl.textContent = 'SpreadJS 初始化失败';
+  info('SpreadJS 初始化失败：' + e.message);
+}
+window.__spread = spread;
+
+// ---------- Univer ----------
+let uniReady = false;
+(async () => {
+  try {
+    await window.UniverCompare.init('uniHost');
+    uniReady = true;
+    document.getElementById('uniVer').textContent = 'OSS ' + (window.univerAPI ? '1.3.1' : '?');
+    checkStatus();
+  } catch (e) {
+    info('Univer 初始化失败：' + e.message);
+    statusEl.textContent = 'Univer 初始化失败';
+  }
+})();
+
+function checkStatus() {
+  const okSjs = !!spread;
+  statusEl.textContent = `SpreadJS ${okSjs ? '就绪' : '未就绪'} · Univer ${uniReady ? '就绪' : '启动中'}`;
+}
+
+// ---------- 用例库 ----------
+// 每条用例：id/title/excel/sjs/uni。代码只允许公开 API。
+const CASES = [
+  {
+    id: 'A1-A8',
+    title: 'A1~A8 字体与纯色填充',
+    excel: 'Excel 基线：微软雅黑 16 磅加粗、深红字、浅黄底',
+    sjs: `var st = new GC.Spread.Sheets.Style();
+st.font = "bold 16pt 微软雅黑";
+st.foreColor = "#C00000";
+st.backColor = "#FFF2CC";
+sheet.setStyle(0, 0, st);
+sheet.setValue(0, 0, "加粗16磅 微软雅黑 深红字 浅黄底");
+sheet.setValue(1, 0, "对照行：默认字体");
+return "font=" + sheet.getStyle(0, 0).font + " back=" + sheet.getStyle(0, 0).backColor;`,
+    uni: `var r = sheet.getRange(0, 0);
+r.setValue("加粗16磅 微软雅黑 深红字 浅黄底");
+r.setFontFamily("微软雅黑");
+r.setFontSize(16);
+r.setFontWeight("bold");
+r.setFontColor("#C00000");
+r.setBackground("#FFF2CC");
+sheet.getRange(1, 0).setValue("对照行：默认字体");
+var s = r.getCellStyleData();
+return "ff=" + s.ff + " fs=" + s.fs + " bl=" + s.bl + " bg=" + JSON.stringify(s.bg);`
+  },
+  {
+    id: 'B2',
+    title: 'B2~B4 图案填充（Excel 6% 灰）',
+    excel: 'Excel 基线：图案填充 pattern=6% 灰、前景黑、背景白',
+    sjs: `var st = new GC.Spread.Sheets.Style();
+st.backColor = {
+  type: GC.Spread.Sheets.PatternType.gray0625,
+  patternColor: "#000000",
+  backgroundColor: "#FFFFFF"
+};
+sheet.setStyle(2, 0, st);
+sheet.setValue(2, 0, "图案填充 6% 灰");
+return "backColor isObject=" + (typeof sheet.getStyle(2, 0).backColor === "object");`,
+    uni: `var r = sheet.getRange(2, 0);
+r.setValue("图案填充 6% 灰");
+// 文档只记载纯色：bg 只有 {rgb}，无 pattern 字段
+r.setBackground("#F2F2F2");
+return "bg=" + JSON.stringify(r.getCellStyleData().bg) + "（Univer 无图案填充字段）";`
+  },
+  {
+    id: 'D1-D8',
+    title: 'D1/D3/D4/D8 对齐、缩进、换行、跨列居中',
+    excel: 'Excel 基线：水平分散对齐、缩进 2、自动换行、跨列居中',
+    sjs: `var st = new GC.Spread.Sheets.Style();
+st.hAlign = GC.Spread.Sheets.HorizontalAlign.distributed;
+st.vAlign = GC.Spread.Sheets.VerticalAlign.center;
+st.textIndent = 2;
+st.wordWrap = true;
+sheet.setStyle(3, 0, st);
+sheet.setValue(3, 0, "分散对齐 + 缩进2 + 自动换行：这段文字比较长，用来观察是否折行");
+var st2 = new GC.Spread.Sheets.Style();
+st2.hAlign = GC.Spread.Sheets.HorizontalAlign.centerContinuous;
+sheet.setStyle(4, 0, st2);
+sheet.setValue(4, 0, "跨列居中");
+return "hAlign=" + sheet.getStyle(3, 0).hAlign + " indent=" + sheet.getStyle(3, 0).textIndent;`,
+    uni: `var r = sheet.getRange(3, 0);
+r.setValue("分散对齐 + 缩进2 + 自动换行：这段文字比较长，用来观察是否折行");
+r.setHorizontalAlignment(6); // 6=DISTRIBUTED
+r.setVerticalAlignment(2);
+r.setWrapStrategy(3);
+// 缩进与跨列居中：文档未记载对应 API
+return "ht=" + r.getCellStyleData().ht + " vt=" + r.getCellStyleData().vt + " tr=" + r.getCellStyleData().tb;`
+  },
+  {
+    id: 'E2-E19',
+    title: 'E2/E3/E17/E19 数字格式（千分位、负数括号红字）',
+    excel: 'Excel 基线：#,##0.00_);[Red](#,##0.00)',
+    sjs: `var nf = '#,##0.00_);[Red](#,##0.00)';
+sheet.setValue(5, 0, 1234567.891);
+sheet.setValue(6, 0, -1234.5);
+sheet.setFormatter(5, 0, nf);
+sheet.setFormatter(6, 0, nf);
+return "formatter=" + sheet.getFormatter(5, 0);`,
+    uni: `var nf = '#,##0.00_);[Red](#,##0.00)';
+sheet.getRange(5, 0).setValue(1234567.891);
+sheet.getRange(6, 0).setValue(-1234.5);
+sheet.getRange(5, 0).setNumberFormat(nf);
+sheet.getRange(6, 0).setNumberFormat(nf);
+return "pattern=" + sheet.getRange(5, 0).getNumberFormat();`
+  },
+  {
+    id: 'E11',
+    title: 'E11 中文大写金额（DBNum2）',
+    excel: 'Excel 基线：[DBNum2][$-804]G/通用格式 → 壹万贰仟叁佰肆拾伍',
+    sjs: `sheet.setValue(7, 0, 12345);
+try {
+  sheet.setFormatter(7, 0, '[DBNum2][$-804]G/通用格式');
+  return "formatter=" + sheet.getFormatter(7, 0);
+} catch (e) { throw new Error('setFormatter 异常：' + e.message); }`,
+    uni: `sheet.getRange(7, 0).setValue(12345);
+try {
+  sheet.getRange(7, 0).setNumberFormat('[DBNum2][$-804]G/通用格式');
+  return "pattern=" + sheet.getRange(7, 0).getNumberFormat();
+} catch (e) { throw new Error('setNumberFormat 异常：' + e.message); }`
+  },
+  {
+    id: 'C1-C5',
+    title: 'C1~C5 边框（外框+内部+线型+颜色）',
+    excel: 'Excel 基线：区域外框中粗红线、内部细虚线灰线',
+    sjs: `var range = new GC.Spread.Sheets.Range(8, 0, 3, 3);
+sheet.getRange(8, 0, 3, 3).setBorder(
+  new GC.Spread.Sheets.LineBorder("#C00000", GC.Spread.Sheets.LineStyle.medium),
+  { outline: true });
+sheet.getRange(8, 0, 3, 3).setBorder(
+  new GC.Spread.Sheets.LineBorder("#9CA3AF", GC.Spread.Sheets.LineStyle.dashed),
+  { inside: true });
+return "边框设置完成";`,
+    uni: `var r = sheet.getRange(8, 0, 3, 3);
+r.setBorder(1, 1, "#C00000");   // 1=ALL? 见日志回读
+var bd = r.getCellStyleData().bd;
+return "bd=" + JSON.stringify(bd);`
+  },
+  {
+    id: 'G12',
+    title: 'G12 条件格式-数据条',
+    excel: 'Excel 基线：蓝条、渐变、最小值自动/最大值自动',
+    sjs: `var Rule = GC.Spread.Sheets.ConditionalFormatting;
+var CF = GC.Spread.Sheets.ConditionalFormatting.ConditionalFormats;
+var range = [new GC.Spread.Sheets.Range(11, 0, 5, 1)];
+for (var i = 0; i < 5; i++) sheet.setValue(11 + i, 0, (i + 1) * 20);
+var r = new Rule.DataBarRule(Rule.ScaleValueType.automin, 0, Rule.ScaleValueType.automax, 0, "#638EC6");
+sheet.conditionalFormats.addRule(r, range);
+return "规则数=" + sheet.conditionalFormats.count();`,
+    uni: `for (var i = 0; i < 5; i++) sheet.getRange(11 + i, 0).setValue((i + 1) * 20);
+var rule = sheet.newConditionalFormattingRule()
+  .setDataBar({ min: { type: 'min' }, max: { type: 'max' }, positiveColor: '#638EC6', isGradient: true });
+sheet.addConditionalFormattingRule(rule);
+return '规则已添加';`
+  },
+  {
+    id: 'free',
+    title: '（空白）自由编辑',
+    excel: '自由编辑：直接用两侧 API 写代码验证任意配置',
+    sjs: `// 示例：sheet.setValue(0,0,"hello");
+return "ok";`,
+    uni: `// 示例：sheet.getRange(0,0).setValue("hello");
+return "ok";`
+  }
+];
+
+const caseSel = document.getElementById('caseSel');
+CASES.forEach((c, i) => {
+  const o = document.createElement('option');
+  o.value = i; o.textContent = c.id + '  ' + c.title;
+  caseSel.appendChild(o);
+});
+const codeSjs = document.getElementById('codeSjs');
+const codeUni = document.getElementById('codeUni');
+const caseExcel = document.getElementById('caseExcel');
+
+function applyCase(i) {
+  const c = CASES[i];
+  codeSjs.value = c.sjs;
+  codeUni.value = c.uni;
+  caseExcel.textContent = c.excel;
+}
+caseSel.addEventListener('change', () => applyCase(+caseSel.value));
+applyCase(0);
+
+// ---------- 执行 ----------
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
+async function runOne(side, code, args) {
+  const names = Object.keys(args);
+  const fn = new AsyncFunction(...names, code);
+  const ret = await fn(...names.map(n => args[n]));
+  log(side, true, typeof ret === 'undefined' ? '执行完成（无返回值）' : String(ret));
+}
+
+document.getElementById('btnRun').addEventListener('click', async () => {
+  if (spread) {
+    try { await runOne('SJS', codeSjs.value, { spread, sheet: spread.getActiveSheet(), GC }); }
+    catch (e) { log('SJS', false, e.message); }
+  }
+  if (uniReady) {
+    try {
+      const wb = window.__wb;
+      await runOne('Univer', codeUni.value, { univerAPI: window.univerAPI, wb, sheet: wb.getActiveSheet() });
+    } catch (e) { log('Univer', false, e.message); }
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') document.getElementById('btnRun').click();
+});
+
+// ---------- 重置 ----------
+document.getElementById('btnReset').addEventListener('click', async () => {
+  if (spread) {
+    spread.fromJSON(new GC.Spread.Sheets.Workbook().toJSON());
+    spread.getActiveSheet().name('Sheet1');
+    log('SJS', true, '已重置');
+  }
+  if (uniReady) {
+    try { await window.UniverCompare.reset(); log('Univer', true, '已重置'); }
+    catch (e) { log('Univer', false, '重置失败：' + e.message); }
+  }
+});
+
+// ---------- 面板折叠 ----------
+const footer = document.getElementById('footer');
+document.getElementById('btnToggle').addEventListener('click', (e) => {
+  footer.classList.toggle('collapsed');
+  e.target.textContent = footer.classList.contains('collapsed') ? '展开面板' : '收起面板';
+});
+document.getElementById('btnClearLog').addEventListener('click', () => { logEl.innerHTML = ''; });
+
+// ---------- 视图切换 ----------
+const footBody = document.querySelector('.foot-body');
+function setView(v) {
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+  const isPerf = v === 'perf';
+  const isApi = v === 'api';
+  footBody.style.display = (isPerf || isApi) ? 'none' : 'flex';
+  document.getElementById('perfPanel').classList.toggle('on', isPerf);
+  document.getElementById('apiPanel').classList.toggle('on', isApi);
+  footer.classList.toggle('perf-mode', isPerf);
+  footer.classList.toggle('api-mode', isApi);
+  footer.classList.remove('collapsed');
+  document.getElementById('btnToggle').textContent = '收起面板';
+  // 性能/API 视图下隐藏功能相关按钮，避免误触
+  ['caseSel', 'btnRun', 'btnReset'].forEach(id => {
+    document.getElementById(id).style.display = (isPerf || isApi) ? 'none' : '';
+  });
+}
+document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
+
+// ---------- 性能基准 ----------
+window.__onSjsReplaced = (sp) => { spread = sp; };
+
+let lastPerf = null;
+
+function fmt(n) {
+  if (n === null || n === undefined) return '—';
+  return n >= 100 ? Math.round(n).toLocaleString() : n.toFixed(1);
+}
+
+function sampleEqual(a, b) {
+  if (!a || !b || a.length !== b.length) return '—';
+  let bad = 0;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i].value, y = b[i].value;
+    const nx = typeof x === 'number', ny = typeof y === 'number';
+    if (nx && ny) { if (Math.abs(x - y) > 0.01) bad++; }
+    else if (String(x) !== String(y)) bad++;
+  }
+  return bad === 0 ? `${a.length}/${a.length} 一致` : `${a.length - bad}/${a.length} 一致`;
+}
+
+function renderPerf(res) {
+  const [s, u] = res.results;
+  const body = document.getElementById('perfBody');
+  const rows = [
+    { cls: 'sjs', r: s },
+    { cls: 'uni', r: u }
+  ];
+  body.innerHTML = rows.map(({ cls, r }) => `
+    <tr class="${cls}">
+      <td class="l">${r.label}</td>
+      <td>${fmt(r.writeMs)}</td>
+      <td>${fmt(r.resumeMs)}</td>
+      <td>${r.fullCalcMs.map(t => fmt(t)).join(' / ')}</td>
+      <td>${fmt(r.fullCalcMedian)}</td>
+      <td>${fmt(r.editRecalcMs)}</td>
+      <td>${sampleEqual(s.samples, u.samples)}</td>
+    </tr>`).join('');
+
+  const perRound = s.fullCalcMs.map((t, i) => u.fullCalcMs[i] / t);
+  const ratio = u.fullCalcMedian / s.fullCalcMedian;
+  const wRatio = s.writeMs > 0 ? u.writeMs / s.writeMs : 0;
+  const v = document.getElementById('perfVerdict');
+  v.innerHTML = `本轮负载 <b>${res.formulaCount.toLocaleString()}</b> 条公式、全量重算 ${res.rounds} 轮：
+    重算中位数 <b>SpreadJS ${fmt(s.fullCalcMedian)} ms</b> vs <b>Univer ${fmt(u.fullCalcMedian)} ms</b>，
+    Univer 是 SpreadJS 的 <b>${ratio.toFixed(2)}×</b>（各轮 ${perRound.map(x => x.toFixed(2) + '×').join(' / ')}）；
+    写公式 Univer 是 SpreadJS 的 <b>${wRatio.toFixed(2)}×</b>。
+    <span style="color:#6b7280">跑完画布已切到性能负载，回功能对照前点「重置」。</span>`;
+  document.getElementById('btnPerfExport').disabled = false;
+  document.getElementById('perfMsg').textContent = '完成';
+}
+
+document.getElementById('btnPerfRun').addEventListener('click', async () => {
+  const btn = document.getElementById('btnPerfRun');
+  const msgEl = document.getElementById('perfMsg');
+  const rows = +document.getElementById('perfRows').value;
+  const rounds = +document.getElementById('perfRounds').value;
+  if (!spread) { msgEl.textContent = 'SpreadJS 未就绪'; return; }
+  if (!uniReady) { msgEl.textContent = 'Univer 未就绪'; return; }
+  btn.disabled = true;
+  document.getElementById('btnPerfExport').disabled = true;
+  const say = (s) => { msgEl.textContent = s; };
+  try {
+    say('生成确定性负载（种子 42）…');
+    await new Promise(r => setTimeout(r, 30));
+    const data = PerfWorkload.generate(rows);
+    const results = [];
+    for (const which of ['sjs', 'uni']) {
+      results.push(await PerfEngine.run(which, data, rounds, say));
+    }
+    lastPerf = {
+      at: new Date().toLocaleString('zh-CN', { hour12: false }),
+      dataRows: rows, rounds, formulaCount: data.formulaCount, results
+    };
+    renderPerf(lastPerf);
+    log('SJS', true, `性能用例完成：重算中位数 ${fmt(results[0].fullCalcMedian)} ms`);
+    log('Univer', true, `性能用例完成：重算中位数 ${fmt(results[1].fullCalcMedian)} ms`);
+  } catch (e) {
+    say('运行失败：' + e.message);
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('btnPerfExport').addEventListener('click', () => {
+  if (!lastPerf) return;
+  const blob = new Blob([JSON.stringify(lastPerf, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `perf-${lastPerf.dataRows}rows-${Date.now()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+});
+
+// ---------- API 检查 ----------
+let lastApi = null;
+
+function apiState(s) {
+  if (!s) return { cls: 'r-no', txt: '—', got: '', api: '' };
+  if (s.skipped) return { cls: 'r-no', txt: '—', got: '', api: '（未测）' };
+  if (s.noApi) return { cls: 'r-no', txt: '无入口', got: s.probeErr ? esc(s.probeErr) : '', api: s.api || '' };
+  if (s.setOk === false) return { cls: 'r-bad', txt: '报错', got: esc(s.err || ''), api: s.api || '' };
+  const got = s.readable ? esc(String(s.got)) : '（无可信读回口）';
+  return { cls: s.match ? 'r-ok' : 'r-bad', txt: s.match ? '通过' : '不符', got, api: s.api || '' };
+}
+function esc(s) {
+  return String(s === undefined || s === null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function apiSummary(res) {
+  const items = res.items.filter(i => !i.skipped);
+  const tally = (side) => {
+    let ok = 0, no = 0, bad = 0, diff = 0;
+    items.forEach(i => {
+      const s = i[side] || {};
+      if (s.noApi) no++;
+      else if (s.setOk === false) bad++;
+      else { ok++; if (!s.match) diff++; }   // 设成功即 PASS；读回值不一致单列，不改判定
+    });
+    return { ok, no, bad, diff, total: items.length };
+  };
+  const a = tally('sjs'), b = tally('uni');
+  return `<b class="sjs">SpreadJS</b> PASS ${a.ok}/${a.total}（FAIL ${a.no + a.bad}：无公开入口 ${a.no}、调用异常 ${a.bad}；读回不一致 ${a.diff}）
+    · <b class="uni">Univer</b> PASS ${b.ok}/${b.total}（FAIL ${b.no + b.bad}：无公开入口 ${b.no}、调用异常 ${b.bad}；读回不一致 ${b.diff}）
+    · <span style="color:#6b7280">判定口径：只有 PASS / FAIL——有公开 API 且 set 成功即 PASS；没有公开入口或调用抛错即 FAIL。"读回不一致"只做提示，不改变判定</span>`;
+}
+
+function renderApi() {
+  if (!lastApi) return;
+  const filter = document.getElementById('apiFilter').value;
+  const items = lastApi.items.filter(i => {
+    if (i.skipped) return filter === 'all';
+    const s = i.sjs || {}, u = i.uni || {};
+    if (filter === 'sjsno') return !!s.noApi;
+    if (filter === 'unino') return !!u.noApi;
+    if (filter === 'fail') return (s.setOk === false || (s.setOk && !s.match)) || (u.setOk === false || (u.setOk && !u.match));
+    if (filter === 'diff') return (!!s.noApi) !== (!!u.noApi) || (!!s.match) !== (!!u.match);
+    return true;
+  });
+
+  document.getElementById('apiSum').innerHTML = apiSummary(lastApi);
+  const body = document.getElementById('apiBody');
+  if (!items.length) {
+    body.innerHTML = `<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:14px">该筛选下没有用例</td></tr>`;
+    return;
+  }
+  body.innerHTML = items.map(i => {
+    const s = apiState(i.sjs), u = apiState(i.uni);
+    const diff = (!!(i.sjs && i.sjs.noApi)) !== (!!(i.uni && i.uni.noApi));
+    const note = (i.sjs && i.sjs.note) || (i.uni && i.uni.note) || i.skip || '';
+    return `<tr class="${diff ? 'diff' : ''}">
+      <td class="id">${i.id}</td>
+      <td class="g">${i.g}</td>
+      <td>${esc(i.name)}</td>
+      <td class="got" title="${esc(i.excel)}">${esc(i.excel)}</td>
+      <td class="api">${esc(s.api)}</td>
+      <td class="res"><span class="${s.cls}">${s.txt}</span></td>
+      <td class="got" title="${s.got}">${s.got}</td>
+      <td class="api">${esc(u.api)}</td>
+      <td class="res"><span class="${u.cls}">${u.txt}</span></td>
+      <td class="got" title="${u.got}">${u.got}</td>
+      <td class="note">${esc(note)}</td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('apiFilter').addEventListener('change', renderApi);
+
+document.getElementById('btnApiRun').addEventListener('click', async () => {
+  const btn = document.getElementById('btnApiRun');
+  const msg = document.getElementById('apiMsg');
+  if (!window.ApiProbe) { msg.textContent = '探针表未加载（js/api-probe.js）'; return; }
+  if (!spread || !uniReady) { msg.textContent = '两侧引擎需先就绪'; return; }
+  btn.disabled = true;
+  document.getElementById('btnApiExport').disabled = true;
+  try {
+    msg.textContent = `正在跑 ${window.ApiProbe.SPEC.length} 项，两侧逐项 set→read…`;
+    await new Promise(r => setTimeout(r, 50));
+    lastApi = await window.ApiProbe.runAll();
+    renderApi();
+    document.getElementById('btnApiExport').disabled = false;
+    const items = lastApi.items.filter(i => !i.skipped);
+    const sOk = items.filter(i => i.sjs && i.sjs.match).length;
+    const uOk = items.filter(i => i.uni && i.uni.match).length;
+    msg.textContent = `完成：SpreadJS ${sOk}/${items.length}、Univer ${uOk}/${items.length}（详见下表，可导出 JSON）`;
+    log('SJS', true, `API 检查完成 ${sOk}/${items.length}`);
+    log('Univer', true, `API 检查完成 ${uOk}/${items.length}`);
+  } catch (e) {
+    msg.textContent = '运行失败：' + e.message;
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('btnApiExport').addEventListener('click', () => {
+  if (!lastApi) return;
+  const blob = new Blob([JSON.stringify(lastApi, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `api-check-${Date.now()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+});
+
+// 授权：地址栏加 ?key=xxx 写入本地存储
+const urlKey = new URLSearchParams(location.search).get('key');
+if (urlKey) {
+  localStorage.setItem('sjs_license', urlKey);
+  info('已保存 SpreadJS 授权，刷新后生效');
+}
+document.getElementById('btnLic').addEventListener('click', () => {
+  const old = localStorage.getItem('sjs_license') || '';
+  const key = prompt('粘贴 SpreadJS 授权码（留空则清除）：', old);
+  if (key === null) return;
+  if (key.trim()) {
+    localStorage.setItem('sjs_license', key.trim());
+    if (spread) spread.setLicenseKey(key.trim());
+    document.getElementById('sjsLic').textContent = '已填授权';
+    log('SJS', true, '授权已应用（水印应消失，若仍在请刷新）');
+  } else {
+    localStorage.removeItem('sjs_license');
+    document.getElementById('sjsLic').textContent = '试用模式';
+  }
+});
+
+info('对照台就绪：选测试项 → 执行两侧 → 看左右画布差异');
+checkStatus();
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# 依赖与产物
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 跑批产物（体积大、可重生成）
+out/
+*.log
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地凭据（token 只放 ~/.workbuddy/mcp.json，永不入库）
+.env
+*.token

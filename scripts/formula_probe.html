@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="/node_modules/@grapecity-software/spread-sheets/dist/gc.spread.sheets.all.min.js"></script>
+<script src="/node_modules/@grapecity-software/spread-sheets-io/dist/gc.spread.sheets.io.min.js"></script>
+</head>
+<body>
+<div id="ss" style="width:1200px;height:800px;border:1px solid gray"></div>
+<script>
+// 全量公式探测宿主页
+// 1) scanSignatures(names)  —— 逐函数扫描可被 SJS 接受的调用签名（argc 0~6 × 3 种参数风格）
+// 2) runFinal(cases)        —— 用最终公式清单一次性写入并读值
+(function () {
+    // "AA12" -> {r:11, c:26}
+    function addr(a) {
+        const m = /^([A-Z]+)(\d+)$/.exec(a);
+        let c = 0;
+        for (const ch of m[1]) c = c * 26 + (ch.charCodeAt(0) - 64);
+        return { r: parseInt(m[2], 10) - 1, c: c - 1 };
+    }
+    function writeData(sheet, data) {
+        if (!data) return;
+        for (const cell of (data.cells || [])) { const p = addr(cell.cell); sheet.setValue(p.r, p.c, cell.value); }
+        for (const f of (data.formulaCells || [])) { const p = addr(f.cell); sheet.setFormula(p.r, p.c, f.formula); }
+    }
+    function makeSpread(rows, cols, data) {
+        const host = document.getElementById('ss');
+        host.innerHTML = '';
+        const spread = new GC.Spread.Sheets.Workbook(host, { sheetCount: 1 });
+        const sheet = spread.getSheet(0);
+        sheet.name('Probe');
+        sheet.setRowCount(rows); sheet.setColumnCount(cols);
+        spread.options.allowDynamicArray = true;   // 动态数组必须开启，否则 FILTER/MAKEARRAY 等全 #NAME?
+        writeData(sheet, data);
+        window.__spread = spread;
+        return { spread, sheet };
+    }
+
+    // Date -> Excel 序列号：必须用本地日历字段算，不能用 epoch 毫秒 + 时区偏移
+    // （1899 年上海时区是 GMT+08:05:43，用当前时区偏移会差出约 5 分 43 秒）
+    function dateSerial(d) {
+        const base = new Date(1899, 11, 30, 0, 0, 0, 0);
+        const day = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+        let days = Math.round((day.getTime() - base.getTime()) / 86400000);
+        let frac = (d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000) / 86400;
+        if (d.getTime() < base.getTime()) { days -= 1; frac = 1 - frac; }
+        return days + frac;
+    }
+
+    function norm(v) {
+        if (v === null || v === undefined) return { v: null, t: 'null' };
+        if (v instanceof Date) return { v: dateSerial(v), t: 'date' };
+        if (typeof v === 'object') {
+            // SJS 的 CalcError 属性在原型上不可枚举，必须走 toString / JSON 提取
+            let s = '';
+            try { s = String(v); } catch (e) {}
+            if (!s || s === '[object Object]') { try { s = JSON.stringify(v); } catch (e) { s = ''; } }
+            let errCode = null;
+            if (/^#[A-Z0-9\/!?]+$/.test(s)) errCode = s;
+            else {
+                const m = s.match(/"?_calcError"?\s*:\s*"([^"]+)"/);
+                if (m) errCode = m[1];
+            }
+            if (errCode) return { v: { err: errCode }, t: 'error' };
+            try { return { v: JSON.parse(JSON.stringify(v)), t: 'object' }; } catch (e) { return { v: s, t: 'object' }; }
+        }
+        return { v: v, t: typeof v };
+    }
+
+    // 给错误值打分（越小越好）
+    function score(nv) {
+        if (nv.t === 'error') {
+            const e = String(nv.v && nv.v.err);
+            if (e.indexOf('#VALUE!') === 0) return 2;
+            if (e.indexOf('#NAME?') === 0) return 3;
+            return 1;   // #N/A / #DIV/0! / #NUM! / #REF! 说明函数真的执行了
+        }
+        if (nv.v === null) return 4;
+        return 0;       // 正常值
+    }
+
+    function buildArgv(argc, style) {
+        const a = [];
+        for (let i = 0; i < argc; i++) {
+            if (style === 'num') a.push('1');
+            else if (style === 'txt') a.push('"1"');
+            else a.push(i === 0 ? '$A$1:$A$3' : '1');   // range 风格：首参给区域
+        }
+        return a.join(',');
+    }
+
+    window.scanSignatures = async function (names, maxArgc) {
+        maxArgc = maxArgc === undefined ? 6 : maxArgc;
+        const { spread, sheet } = makeSpread(Math.max(names.length * 12 + 20, 700), 40);
+        const out = [];
+        const styles = ['num', 'txt', 'range'];
+        for (let i = 0; i < names.length; i++) {
+            const name = names[i];
+            const r = 2 + i * 12;
+            let best = null;   // {argc, style, formula, nv, sc}
+            let rejectedAll = true;
+            for (let argc = 0; argc <= maxArgc; argc++) {
+                for (const st of styles) {
+                    if (argc === 0 && st !== 'num') continue;  // 0 参只有一种风格
+                    const f = '=' + name + '(' + buildArgv(argc, st) + ')';
+                    let ok = true;
+                    try { sheet.setFormula(r, 25, f); } catch (e) { ok = false; }
+                    if (!ok) continue;
+                    rejectedAll = false;
+                    let v = null;
+                    try { v = sheet.getValue(r, 25); } catch (e) {}
+                    let nv = norm(v);
+                    if (nv.v === null) { try { sheet.recalcAll(true); } catch (e) {} try { v = sheet.getValue(r, 25); nv = norm(v); } catch (e) {} }
+                    const sc = score(nv);
+                    if (best === null || sc < best.sc) best = { argc, style: st, formula: f, value: nv.v, valueType: nv.t, score: sc };
+                    if (sc <= 1) break;   // 已拿到可执行或真实值，停止扫描
+                }
+                if (best && best.score <= 1) break;
+            }
+            if (!best) {
+                // 全部被拒：可能签名更特殊（文本/日期），记录为拒绝
+                out.push({ name, accepted: false, rejectedAll: true, formula: null, argc: null, style: null, value: null, valueType: null, score: 9 });
+            } else {
+                out.push({ name, accepted: true, rejectedAll: false, formula: best.formula, argc: best.argc, style: best.style, value: best.value, valueType: best.valueType, score: best.score });
+            }
+            // 清空该行公式，避免溢出区互相干扰
+            try { sheet.setFormula(r, 25, null); } catch (e) {}
+        }
+        return { total: names.length, rows: out };
+    };
+
+    window.runFinal = async function (cases, data) {
+        const { spread, sheet } = makeSpread(cases.length * 12 + 200, 40, data);
+        const setErrs = [];
+        const rows = [];
+        // 逐条写入 + 立即回读（批量写 + suspendPaint 在 619 条规模下会丢公式）
+        for (let i = 0; i < cases.length; i++) {
+            const r = 2 + i * 12, c = cases[i];
+            let ok = true;
+            try { sheet.setFormula(r, 25, c.formula); } catch (e) { ok = false; setErrs.push({ id: c.id, err: String(e && e.message || e).slice(0, 120) }); }
+            let v = null;
+            if (ok) { try { v = sheet.getValue(r, 25); } catch (e) {} }
+            if (ok && v === null) { try { sheet.recalcAll(true); } catch (e) {} try { v = sheet.getValue(r, 25); } catch (e) {} }
+            rows.push({ id: c.id, name: c.name, formula: c.formula, value: null, valueType: null, formulaReadBack: null, text: null, _ok: ok });
+        }
+        // 统一重算后再读一次（拿到最终值）
+        try { spread.calculate(GC.Spread.Sheets.CalculationType.all); } catch (e) {}
+        for (let i = 0; i < spread.getSheetCount(); i++) { try { spread.getSheet(i).recalcAll(true); } catch (e) {} }
+        for (let i = 0; i < cases.length; i++) {
+            const r = 2 + i * 12;
+            let v = null, f = null, txt = null;
+            try { v = sheet.getValue(r, 25); } catch (e) {}
+            try { f = sheet.getFormula(r, 25); } catch (e) {}
+            try { txt = sheet.getText(r, 25); } catch (e) {}
+            const nv = norm(v);
+            rows[i].value = nv.v; rows[i].valueType = nv.t; rows[i].formulaReadBack = f; rows[i].text = txt;
+        }
+        return { rowCount: sheet.getRowCount(), colCount: sheet.getColumnCount(), allowDynamicArray: spread.options.allowDynamicArray, setErrors: setErrs, rows };
+    };
+
+    window.sjsVersion = function () {
+        try { return GC.Spread.Sheets.ProductInfo && GC.Spread.Sheets.ProductInfo.version || null; } catch (e) { return null; }
+    };
+})();
+</script>
+</body>
+</html>

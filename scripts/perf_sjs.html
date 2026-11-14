@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="/node_modules/@grapecity-software/spread-sheets/dist/gc.spread.sheets.all.min.js"></script>
+</head>
+<body>
+<div id="ss" style="width:1400px;height:900px;border:1px solid gray"></div>
+<script>
+window.initPerfSjs = function () {
+    const host = document.getElementById('ss');
+    const spread = new GC.Spread.Sheets.Workbook(host, { sheetCount: 6 });
+    spread.options.allowDynamicArray = true;
+    spread.suspendPaint();
+    const names = ['Data', 'Params', 'Products', 'Report', 'Chain', 'Dynamic'];
+    window.__sheets = {};
+    for (let i = 0; i < names.length; i++) {
+        const s = spread.getSheet(i);
+        s.name(names[i]);
+        window.__sheets[names[i]] = s;
+    }
+    window.__sheets.Data.setRowCount(10001); window.__sheets.Data.setColumnCount(9);
+    window.__sheets.Params.setRowCount(4); window.__sheets.Params.setColumnCount(2);
+    window.__sheets.Products.setRowCount(21); window.__sheets.Products.setColumnCount(2);
+    window.__sheets.Report.setRowCount(20); window.__sheets.Report.setColumnCount(21);
+    window.__sheets.Chain.setRowCount(1001); window.__sheets.Chain.setColumnCount(4);
+    window.__sheets.Dynamic.setRowCount(10001); window.__sheets.Dynamic.setColumnCount(30);
+    spread.resumePaint();
+    window.__spread = spread;
+    return true;
+};
+
+window.setupWorkload = function (data) {
+    const spread = window.__spread;
+    spread.suspendPaint();
+    const setVals = (s, vals, r0 = 0, c0 = 0) => {
+        for (let r = 0; r < vals.length; r++)
+            for (let c = 0; c < vals[r].length; c++)
+                if (vals[r][c] !== null) s.setValue(r0 + r, c0 + c, vals[r][c]);
+    };
+    setVals(window.__sheets.Data, data.dataValues);
+    setVals(window.__sheets.Params, data.paramsValues);
+    setVals(window.__sheets.Products, data.productsValues);
+    setVals(window.__sheets.Report, data.reportValues);
+    setVals(window.__sheets.Report, data.reportPart2, 8, 0);
+    setVals(window.__sheets.Chain, data.chainValues);
+    spread.resumePaint();
+    return true;
+};
+
+// 挂起计算 → 写公式（计时）→ 恢复计算
+window.writeFormulas = function (data) {
+    const spread = window.__spread;
+    const sheets = window.__sheets;
+    spread.suspendCalcService(false);
+    spread.suspendPaint();
+    const t0 = performance.now();
+    // Data F..I
+    const ds = sheets.Data;
+    for (let r = 1; r < data.dataFormulas.length; r++) {
+        const row = data.dataFormulas[r];
+        const cells = ['F', 'G', 'H', 'I'];
+        for (let c = 0; c < 4; c++) {
+            const f = row[5 + c];
+            if (f) ds.setFormula(r, 5 + c, f);
+        }
+    }
+    const put = (sheet, cell, formula) => {
+        const m = /^([A-Z]+)(\d+)$/.exec(cell);
+        let col = 0; for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64);
+        sheet.setFormula(parseInt(m[2]) - 1, col - 1, formula);
+    };
+    for (const f of data.reportFormulas) put(sheets.Report, f.cell, f.formula);
+    for (const f of data.chainFormulas) put(sheets.Chain, f.cell, f.formula);
+    for (const f of data.dynFormulas) put(sheets.Dynamic, f.cell, f.formula);
+    const writeMs = performance.now() - t0;
+    spread.resumePaint();
+    const t1 = performance.now();
+    spread.resumeCalcService(false);
+    const resumeMs = performance.now() - t1;
+    return { writeMs, resumeMs };
+};
+
+// 强制全量重算（计时），runs 次
+window.forceFullCalc = function (runs) {
+    const spread = window.__spread;
+    const t = GC.Spread.CalcEngine;
+    const times = [];
+    for (let i = 0; i < runs; i++) {
+        const t0 = performance.now();
+        spread.calculate(GC.Spread.Sheets.CalculationType.all);
+        times.push(performance.now() - t0);
+    }
+    return times;
+};
+
+// 修改 1 个输入 + 强制全量重算
+window.editAndRecalc = function () {
+    const spread = window.__spread;
+    const t0 = performance.now();
+    window.__sheets.Params.setValue(1, 1, 0.17); // Params!B2
+    spread.calculate(GC.Spread.Sheets.CalculationType.all);
+    return performance.now() - t0;
+};
+
+// 读取核对样本
+window.readSamples = function (samples) {
+    const out = [];
+    for (const s of samples) {
+        const sheet = window.__sheets[s.sheet];
+        const m = /^([A-Z]+)(\d+)$/.exec(s.cell);
+        let col = 0; for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64);
+        let v = sheet.getValue(parseInt(m[2]) - 1, col - 1);
+        if (v instanceof GC.Spread.CalcEngine.CalcError) v = String(v);
+        out.push({ sheet: s.sheet, cell: s.cell, value: v === undefined ? null : v });
+    }
+    return out;
+};
+</script>
+</body>
+</html>

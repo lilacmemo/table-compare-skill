@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- npm 分模块安装（当前官方 scope）：npm i @grapecity-software/spread-sheets @grapecity-software/spread-sheets-shapes @grapecity-software/spread-sheets-charts @grapecity-software/spread-sheets-io
+     旧 @mescius 整包已 404；@mescius 分模块包为海外渠道同源 dist，仅在 @grapecity-software 不可用时替换下述路径。
+     测试报告必须注明：包名 + 具体版本号（npm ls @grapecity-software/spread-sheets） -->
+<script src="/node_modules/@grapecity-software/spread-sheets/dist/gc.spread.sheets.all.min.js"></script>
+<script src="/node_modules/@grapecity-software/spread-sheets-shapes/dist/gc.spread.sheets.shapes.min.js"></script>
+<script src="/node_modules/@grapecity-software/spread-sheets-charts/dist/gc.spread.sheets.charts.min.js"></script>
+<script src="/node_modules/@grapecity-software/spread-sheets-io/dist/gc.spread.sheets.io.min.js"></script>
+</head>
+<body>
+<div id="ss" style="width:1200px;height:800px;border:1px solid gray"></div>
+<script>
+window.runImport = async function (base64Data, preserveUnsupported) {
+    const host = document.getElementById('ss');
+    host.innerHTML = '';
+    const spread = new GC.Spread.Sheets.Workbook(host, { sheetCount: 1 });
+    const bin = atob(base64Data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+    // 正确用法（v16+ io 插件）：spread.import + fileType=excel
+    await new Promise((resolve, reject) => {
+        spread.import(blob, () => resolve(),
+            e => reject(new Error(typeof e === 'string' ? e : (e && e.errorMessage) || JSON.stringify(e))),
+            {
+                fileType: GC.Spread.Sheets.FileType.excel,
+                includeStyles: true,
+                includeFormulas: true,
+                openMode: GC.Spread.Sheets.OpenMode.normal
+            });
+    });
+
+    // preserveUnsupportedChart 是 sheet 级 API，导入后逐表开启
+    if (preserveUnsupported) {
+        for (let i = 0; i < spread.getSheetCount(); i++) {
+            try { spread.getSheet(i).charts.preserveUnsupportedChart(true); } catch (e) {}
+        }
+    }
+
+    const typeNames = GC.Spread.Sheets.Charts.ChartType;
+    const nameOf = (t) => {
+        for (const k in typeNames) { if (typeNames[k] === t) return k; }
+        return 'TYPE_' + t;
+    };
+    const sheets = [];
+    const count = spread.getSheetCount();
+    window.__spread = spread;  // 保留引用供截图
+    const apiInfo = {
+        hasGetCharts: typeof spread.getSheet(0).getCharts,
+        hasChartsCollection: typeof spread.getSheet(0).charts,
+        hasChartsAll: spread.getSheet(0).charts ? typeof spread.getSheet(0).charts.all : 'undefined',
+        hasChartsNamespace: typeof GC.Spread.Sheets.Charts
+    };
+    for (let i = 0; i < count; i++) {
+        const sheet = spread.getSheet(i);
+        let charts = [];
+        let via = '';
+        try {
+            if (typeof sheet.getCharts === 'function') { charts = sheet.getCharts(); via = 'getCharts'; }
+        } catch (e) {}
+        try {
+            if (charts.length === 0 && sheet.charts && typeof sheet.charts.all === 'function') {
+                charts = sheet.charts.all(); via = 'charts.all';
+            }
+        } catch (e) {}
+        sheets.push({
+            sheet: sheet.name(),
+            chartCount: charts.length,
+            via: via,
+            charts: charts.map(c => {
+                const o = { name: c.name(), type: nameOf(c.chartType()) };
+                try { o.title = (c.title() && c.title().text) || null; } catch (e) {}
+                return o;
+            })
+        });
+    }
+    // 不销毁，等待截图；提供切表函数
+    window.__gotoSheet = function (name) {
+        const s = window.__spread.getSheetFromName(name);
+        if (s) window.__spread.setSheetIndexByName ? null : null;
+        for (let i = 0; i < window.__spread.getSheetCount(); i++) {
+            if (window.__spread.getSheet(i).name() === name) { window.__spread.setActiveSheetIndex(i); break; }
+        }
+        return true;
+    };
+    return { ok: true, preserveUnsupported: !!preserveUnsupported, sheetCount: count, sheets: sheets, apiInfo: apiInfo };
+};
+</script>
+</body>
+</html>
