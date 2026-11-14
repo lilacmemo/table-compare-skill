@@ -38,6 +38,8 @@ cd ~/.workbuddy/skills/table-sdk-compare && git pull
 
 > 不想用 git 也能用：把仓库打成 zip，解压到同一路径，效果一样，只是没有版本追踪。
 
+**仓库里只有方法论和脚本**，不含你的对比工程、样本 xlsx 与报告产物——那些在你自己的工作区里单独管理。新起一个工程时从 `templates/dual-pane-harness/` 复制骨架，样本按 SKILL.md 第 1 步自造（样本即交付物，不能复用别人的结论文件）。
+
 ## 3. MCP 配置（必做，且必须用**自己的** token）
 
 在 `~/.workbuddy/mcp.json` 里加：
